@@ -1,0 +1,15 @@
+{
+    "name": "labpro-2-2026",
+    "version": "1.0.0",
+    "private": true,
+    "workspaces": [
+        "auth-provider/*",
+        "applications/*"
+    ],
+    "scripts": {
+        "dev:server": "npm run dev --workspace=auth-provider/server",
+        "dev:sync-worker": "npm run dev --workspace=auth-provider/sync-worker",
+        "dev:app-a": "npm run dev --workspace=applications/app-a",
+        "dev:app-b": "npm run dev --workspace=applications/app-b"
+    }
+}

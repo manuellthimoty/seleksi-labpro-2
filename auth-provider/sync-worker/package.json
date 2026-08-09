@@ -1,0 +1,25 @@
+{
+    "name": "sync-worker",
+    "version": "1.0.0",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "dev": "tsx watch src/index.ts",
+        "build": "tsc",
+        "start": "node dist/index.js"
+    },
+    "dependencies": {
+        "drizzle-orm": "^0.36.0",
+        "pg": "^8.13.0",
+        "amqplib": "^0.10.0",
+        "hono": "^4.6.0",
+        "@hono/node-server": "^1.13.0"
+    },
+    "devDependencies": {
+        "typescript": "^5.6.0",
+        "tsx": "^4.19.0",
+        "@types/node": "^22.0.0",
+        "@types/pg": "^8.11.0",
+        "@types/amqplib": "^0.10.0"
+    }
+}
