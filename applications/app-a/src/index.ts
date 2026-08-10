@@ -9,7 +9,7 @@ app.get('/',(c) => {
     return c.text('app A runn');
 })
 
-const port = 4000;
+const port = Number(process.env.PORT) || 4000;
 
 serve({
     fetch : app.fetch,
