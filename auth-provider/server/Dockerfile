@@ -18,7 +18,8 @@ ENV NODE_ENV=production
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=build /app/auth-provider/server/dist ./auth-provider/server/dist
 COPY auth-provider/server/package.json ./auth-provider/server/package.json
+COPY auth-provider/server/drizzle ./auth-provider/server/drizzle
 
 WORKDIR /app/auth-provider/server
 EXPOSE 3000
-CMD ["node", "dist/index.js"]
+CMD ["sh", "-c", "node dist/db/migrate.js && node dist/index.js"]
