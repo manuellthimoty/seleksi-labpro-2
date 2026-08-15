@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { eq, inArray } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { usersTable, groupsTable, userGroupsTable } from '../db/schema/index.js';
+import { usersTable, groupsTable, userGroupsTable, applicationsTable, applicationGroupPoliciesTable } from '../db/schema/index.js';
 import { hashPassword } from '../lib/password.js';
 import { formatError } from '../lib/error.js';
 import { logAuditEvent } from '../lib/audit-log.js';
@@ -177,6 +177,62 @@ users.post('/:id/groups', async (c) => {
         .where(eq(userGroupsTable.userId, id));
 
     return c.json({ data: { groups: memberGroups } });
+});
+
+users.get('/:id/access-overview', async (c) => {
+    const requestId = c.get('requestId');
+    const id = c.req.param('id');
+
+    const [user] = await db.select(publicUserColumns).from(usersTable).where(eq(usersTable.id, id)).limit(1);
+    if (!user) {
+        return c.json(formatError('NOT_FOUND', 'User not found', requestId), 404);
+    }
+
+    const memberGroups = await db
+        .select({ id: groupsTable.id, name: groupsTable.name })
+        .from(userGroupsTable)
+        .innerJoin(groupsTable, eq(userGroupsTable.groupId, groupsTable.id))
+        .where(eq(userGroupsTable.userId, id));
+
+    const groupIds = memberGroups.map((g) => g.id);
+
+    const policyRows = groupIds.length ? await db
+              .select({
+                  applicationId: applicationsTable.id,
+                  applicationName: applicationsTable.name,
+                  applicationStatus: applicationsTable.status,
+                  groupId: groupsTable.id,
+                  groupName: groupsTable.name,
+                  effect: applicationGroupPoliciesTable.effect,
+              })
+              .from(applicationGroupPoliciesTable)
+              .innerJoin(applicationsTable, eq(applicationGroupPoliciesTable.applicationId, applicationsTable.id))
+              .innerJoin(groupsTable, eq(applicationGroupPoliciesTable.groupId, groupsTable.id))
+              .where(inArray(applicationGroupPoliciesTable.groupId, groupIds))
+        : [];
+
+    // satu application bs punya bbrp policy
+    const applicationsById = new Map<string,
+        { id: string; name: string; status: string; grantedVia: { groupId: string; groupName: string; effect: string }[] }
+    >();
+    for (const row of policyRows) {
+        const entry = applicationsById.get(row.applicationId) ?? {
+            id: row.applicationId,
+            name: row.applicationName,
+            status: row.applicationStatus,
+            grantedVia: [],
+        };
+        entry.grantedVia.push({ groupId: row.groupId, groupName: row.groupName, effect: row.effect });
+        applicationsById.set(row.applicationId, entry);
+    }
+
+    return c.json({
+        data: {
+            user,
+            groups: memberGroups,
+            applications: Array.from(applicationsById.values()),
+        },
+    });
 });
 
 export default users;
