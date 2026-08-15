@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { applicationsTable, applicationRedirectUrisTable } from '../db/schema/index.js';
 import { generateToken } from '../lib/token.js';
@@ -153,6 +153,87 @@ applications.patch('/:id/status', async (c) => {
     });
 
     return c.json({ data: application });
+});
+
+applications.get('/:id/redirect-uris',async (c) => {
+    const requestId = c.get('requestId');
+    const id = c.req.param('id');
+
+    const [application] = await db.select(publicApplicationColumns).from(applicationsTable).where(eq(applicationsTable.id, id)).limit(1);
+    if (!application) {
+        return c.json(formatError('NOT_FOUND', 'Application not found', requestId), 404);
+    }
+
+    const redirectUris = await getRedirectUris(id);
+    return c.json({ data: redirectUris });
+
+})
+
+const addRedirectUriSchema = z.object({
+    redirectUri: z.string().url(),
+});
+
+applications.post('/:id/redirect-uris', async (c) => {
+    const requestId = c.get('requestId');
+    const id = c.req.param('id');
+
+    const parsed = addRedirectUriSchema.safeParse(await c.req.json());
+    if (!parsed.success) {
+        return c.json(formatError('VALIDATION_ERROR', parsed.error.issues[0].message, requestId), 400);
+    }
+
+    const [application] = await db.select({ id: applicationsTable.id }).from(applicationsTable).where(eq(applicationsTable.id, id)).limit(1);
+    if (!application) {
+        return c.json(formatError('NOT_FOUND', 'Application not found', requestId), 404);
+    }
+
+    const [existing] = await db
+        .select({ id: applicationRedirectUrisTable.id })
+        .from(applicationRedirectUrisTable)
+        .where(and(eq(applicationRedirectUrisTable.applicationId, id), eq(applicationRedirectUrisTable.redirectUri, parsed.data.redirectUri)))
+        .limit(1);
+    if (existing) {
+        return c.json(formatError('REDIRECT_URI_EXISTS', 'Redirect URI already registered for this application', requestId), 409);
+    }
+
+    const [uri] = await db
+        .insert(applicationRedirectUrisTable)
+        .values({ applicationId: id, redirectUri: parsed.data.redirectUri })
+        .returning();
+
+    await logAuditEvent({
+        eventType: 'application.redirect_uri.add',
+        result: 'success',
+        applicationId: id,
+        actorId: c.get('userId'),
+        metadata: { redirectUri: parsed.data.redirectUri },
+    });
+
+    return c.json({ data: uri }, 201);
+});
+
+applications.delete('/:id/redirect-uris/:uriId', async (c) => {
+    const requestId = c.get('requestId');
+    const id = c.req.param('id');
+    const uriId = c.req.param('uriId');
+
+    const [deleted] = await db
+        .delete(applicationRedirectUrisTable)
+        .where(and(eq(applicationRedirectUrisTable.id, uriId), eq(applicationRedirectUrisTable.applicationId, id)))
+        .returning();
+    if (!deleted) {
+        return c.json(formatError('NOT_FOUND', 'Redirect URI not found', requestId), 404);
+    }
+
+    await logAuditEvent({
+        eventType: 'application.redirect_uri.remove',
+        result: 'success',
+        applicationId: id,
+        actorId: c.get('userId'),
+        metadata: { redirectUri: deleted.redirectUri },
+    });
+
+    return c.body(null, 204);
 });
 
 export default applications;
