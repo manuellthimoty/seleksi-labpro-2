@@ -1,9 +1,10 @@
-import type { Context } from 'hono';
 import { createMiddleware } from 'hono/factory';
+import { getCookie } from 'hono/cookie';
 import { validSession } from '../lib/session.js';
+import type { AppEnv } from '../lib/hono-env.js';
 
-const requireAuth = createMiddleware(async (c: Context, next) => {
-    const sessionToken = c.req.cookie('session_id');
+export const requireAuth = createMiddleware<AppEnv>(async (c, next) => {
+    const sessionToken = getCookie(c, 'session_id');
     if (!sessionToken) {
         return c.json({ error: { code: 'UNAUTHORIZED', message: '...' } }, 401);
     }
