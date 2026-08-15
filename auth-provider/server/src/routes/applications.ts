@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { eq, and } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { applicationsTable, applicationRedirectUrisTable } from '../db/schema/index.js';
+import { applicationsTable, applicationRedirectUrisTable, applicationGroupPoliciesTable, groupsTable } from '../db/schema/index.js';
 import { generateToken } from '../lib/token.js';
 import { hashPassword } from '../lib/password.js';
 import { formatError } from '../lib/error.js';
@@ -231,6 +231,111 @@ applications.delete('/:id/redirect-uris/:uriId', async (c) => {
         applicationId: id,
         actorId: c.get('userId'),
         metadata: { redirectUri: deleted.redirectUri },
+    });
+
+    return c.body(null, 204);
+});
+// nge list semua policies yg dipunyai p;ej suatu app
+applications.get('/:id/policies', async (c) => {
+    const requestId = c.get('requestId');
+    const id = c.req.param('id');
+
+    const [application] = await db.select({ id: applicationsTable.id }).from(applicationsTable).where(eq(applicationsTable.id, id)).limit(1);
+    if (!application) {
+        return c.json(formatError('NOT_FOUND', 'Application not found', requestId), 404);
+    }
+
+    // di join sm groups table supaya keliatan nama groupnya
+    const policies = await db
+        .select({
+            id: applicationGroupPoliciesTable.id,
+            groupId: groupsTable.id,
+            groupName: groupsTable.name,
+            effect: applicationGroupPoliciesTable.effect,
+            createdAt: applicationGroupPoliciesTable.createdAt,
+        })
+        .from(applicationGroupPoliciesTable)
+        .innerJoin(groupsTable, eq(applicationGroupPoliciesTable.groupId, groupsTable.id))
+        .where(eq(applicationGroupPoliciesTable.applicationId, id));
+
+    return c.json({ data: policies });
+});
+
+const assignPolicySchema = z.object({
+    groupId: z.string().uuid(),
+    effect: z.enum(['allow', 'deny']).default('allow'),
+});
+
+applications.post('/:id/policies', async (c) => {
+    const requestId = c.get('requestId');
+    const id = c.req.param('id');
+
+    const parsed = assignPolicySchema.safeParse(await c.req.json());
+    if (!parsed.success) {
+        return c.json(formatError('VALIDATION_ERROR', parsed.error.issues[0].message, requestId), 400);
+    }
+    const { groupId, effect } = parsed.data;
+
+    const [application] = await db.select({ id: applicationsTable.id }).from(applicationsTable).where(eq(applicationsTable.id, id)).limit(1);
+    if (!application) {
+        return c.json(formatError('NOT_FOUND', 'Application not found', requestId), 404);
+    }
+
+    const [group] = await db.select({ id: groupsTable.id }).from(groupsTable).where(eq(groupsTable.id, groupId)).limit(1);
+    if (!group) {
+        return c.json(formatError('NOT_FOUND', 'Group not found', requestId), 404);
+    }
+
+    const [existing] = await db
+        .select({ id: applicationGroupPoliciesTable.id })
+        .from(applicationGroupPoliciesTable)
+        .where(
+            and(
+                eq(applicationGroupPoliciesTable.applicationId, id),
+                eq(applicationGroupPoliciesTable.groupId, groupId),
+                eq(applicationGroupPoliciesTable.effect, effect),
+            ),
+        )
+        .limit(1);
+    if (existing) {
+        return c.json(formatError('POLICY_EXISTS', 'This group already has this policy for the application', requestId), 409);
+    }
+
+    const [policy] = await db
+        .insert(applicationGroupPoliciesTable)
+        .values({ applicationId: id, groupId, effect })
+        .returning();
+
+    await logAuditEvent({
+        eventType: 'application.policy.assign',
+        result: 'success',
+        applicationId: id,
+        actorId: c.get('userId'),
+        metadata: { groupId, effect },
+    });
+
+    return c.json({ data: policy }, 201);
+});
+
+applications.delete('/:id/policies/:policyId', async (c) => {
+    const requestId = c.get('requestId');
+    const id = c.req.param('id');
+    const policyId = c.req.param('policyId');
+
+    const [deleted] = await db
+        .delete(applicationGroupPoliciesTable)
+        .where(and(eq(applicationGroupPoliciesTable.id, policyId), eq(applicationGroupPoliciesTable.applicationId, id)))
+        .returning();
+    if (!deleted) {
+        return c.json(formatError('NOT_FOUND', 'Policy not found', requestId), 404);
+    }
+
+    await logAuditEvent({
+        eventType: 'application.policy.revoke',
+        result: 'success',
+        applicationId: id,
+        actorId: c.get('userId'),
+        metadata: { groupId: deleted.groupId, effect: deleted.effect },
     });
 
     return c.body(null, 204);
