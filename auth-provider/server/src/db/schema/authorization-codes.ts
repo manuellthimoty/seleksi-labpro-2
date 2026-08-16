@@ -10,6 +10,8 @@ export const authorizationCodesTable = pgTable("authorization_codes", {
   applicationId: uuid('application_id').notNull().references(() => applicationsTable.id),
   ssoSessionId: uuid('sso_session_id').notNull().references(() => ssoSessionsTable.id),
   redirectUri: varchar('redirect_uri').notNull(),
+  codeChallenge: varchar('code_challenge').notNull(),
+  codeChallengeMethod: varchar('code_challenge_method').notNull().default('S256'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   expiresAt: timestamp('expires_at').notNull(),
   usedAt: timestamp('used_at'),
