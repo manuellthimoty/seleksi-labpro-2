@@ -9,6 +9,7 @@ import {
     applicationGroupPoliciesTable,
     userGroupsTable,
     authorizationCodesTable,
+    usersTable,
 } from '../db/schema/index.js';
 import { validSession } from '../lib/session.js';
 import { generateToken } from '../lib/token.js';
@@ -45,8 +46,13 @@ authorize.get('/authorize', async (c) => {
         .from(applicationsTable)
         .where(eq(applicationsTable.clientId, client_id))
         .limit(1);
-    if (!application || application.status !== 'active') {
-        return c.json(formatError('INVALID_CLIENT', 'Unknown or inactive client_id', requestId), 400);
+    if (!application) {
+        return c.json(formatError('INVALID_CLIENT', 'Unknown client_id', requestId), 400);
+    }
+
+    // status application harus active
+    if (application.status !== 'active') {
+        return c.json(formatError('CLIENT_INACTIVE', 'This client is inactive', requestId), 400);
     }
 
     const [registeredUri] = await db
@@ -71,6 +77,24 @@ authorize.get('/authorize', async (c) => {
         const loginUrl = new URL('/login', nextUrl.origin);
         loginUrl.searchParams.set('redirect_to', nextUrl.pathname + nextUrl.search);
         return c.redirect(loginUrl.toString(), 302);
+    }
+
+    // status user harus active 
+    // asumsi aja terdapat user udh dideactive, tp session masih valid
+    const [user] = await db.select({ status: usersTable.status }).from(usersTable).where(eq(usersTable.id, session.userId)).limit(1);
+    if (!user || user.status !== 'active') {
+        await logAuditEvent({
+            eventType: 'authorization.denied',
+            result: 'failure',
+            userId: session.userId,
+            applicationId: application.id,
+            sessionId: session.id,
+            metadata: { reason: 'user_inactive' },
+        });
+        const deniedUrl = new URL(redirect_uri);
+        deniedUrl.searchParams.set('error', 'access_denied');
+        deniedUrl.searchParams.set('state', state);
+        return c.redirect(deniedUrl.toString(), 302);
     }
 
     const memberGroups = await db
