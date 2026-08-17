@@ -1,12 +1,14 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { and, eq } from 'drizzle-orm';
+import { getCookie, deleteCookie } from 'hono/cookie';
 import { db } from '../db/index.js';
-import { applicationsTable, accessTokensTable } from '../db/schema/index.js';
+import { applicationsTable, accessTokensTable, ssoSessionsTable } from '../db/schema/index.js';
 import { verifyPassword } from '../lib/password.js';
 import { hashToken } from '../lib/token-hash.js';
 import { formatError } from '../lib/error.js';
 import { logAuditEvent } from '../lib/audit-log.js';
+import { publishSessionRevoked } from '../lib/events.js';
 import type { AppEnv } from '../lib/hono-env.js';
 
 const logout = new Hono<AppEnv>();
@@ -60,6 +62,48 @@ logout.post('/logout', async (c) => {
             sessionId: revoked.ssoSessionId,
         });
     }
+    return c.body(null, 204);
+});
+
+logout.post('/logout/sso', async (c) => {
+    const sessionToken = getCookie(c, 'session_id');
+    deleteCookie(c, 'session_id', { path: '/' });
+
+    if (!sessionToken) {
+        return c.body(null, 204);
+    }
+
+    const tokenHash = hashToken(sessionToken);
+    const [session] = await db
+        .update(ssoSessionsTable)
+        .set({ status: 'revoked', revokedAt: new Date(), revokeReason: 'user_logout' })
+        .where(and(eq(ssoSessionsTable.sessionTokenHash, tokenHash), eq(ssoSessionsTable.status, 'active')))
+        .returning({ id: ssoSessionsTable.id, userId: ssoSessionsTable.userId });
+
+    if (!session) {
+        return c.body(null, 204);
+    }
+
+    await db
+        .update(accessTokensTable)
+        .set({ status: 'revoked', revokedAt: new Date() })
+        .where(and(eq(accessTokensTable.ssoSessionId, session.id), eq(accessTokensTable.status, 'active')));
+
+    await logAuditEvent({
+        eventType: 'sso_session.revoke',
+        result: 'success',
+        userId: session.userId,
+        sessionId: session.id,
+    });
+
+    publishSessionRevoked({
+        eventType: 'SessionRevoked',
+        sessionId: session.id,
+        userId: session.userId,
+        revokedAt: new Date().toISOString(),
+        reason: 'user_logout',
+    });
+
     return c.body(null, 204);
 });
 
