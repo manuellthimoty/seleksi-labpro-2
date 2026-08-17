@@ -18,7 +18,8 @@ ENV NODE_ENV=production
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=build /app/applications/app-b/dist ./applications/app-b/dist
 COPY applications/app-b/package.json ./applications/app-b/package.json
+COPY applications/app-b/drizzle ./applications/app-b/drizzle
 
 WORKDIR /app/applications/app-b
 EXPOSE 5000
-CMD ["node", "dist/index.js"]
+CMD ["sh", "-c", "node dist/db/migrate.js && node dist/index.js"]
