@@ -1,11 +1,20 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { usersTable, groupsTable, userGroupsTable, applicationsTable, applicationGroupPoliciesTable } from '../db/schema/index.js';
+import {
+    usersTable,
+    groupsTable,
+    userGroupsTable,
+    applicationsTable,
+    applicationGroupPoliciesTable,
+    ssoSessionsTable,
+    accessTokensTable,
+} from '../db/schema/index.js';
 import { hashPassword } from '../lib/password.js';
 import { formatError } from '../lib/error.js';
 import { logAuditEvent } from '../lib/audit-log.js';
+import { publishPasswordChanged } from '../lib/events.js';
 import type { AppEnv } from '../lib/hono-env.js';
 
 const users = new Hono<AppEnv>();
@@ -129,6 +138,54 @@ users.patch('/:id/status', async (c) => {
         result: 'success',
         userId: id,
         actorId: c.get('userId'),
+    });
+
+    return c.json({ data: user });
+});
+
+const changePasswordSchema = z.object({ password: z.string().min(8) });
+
+users.patch('/:id/password', async (c) => {
+    const requestId = c.get('requestId');
+    const id = c.req.param('id');
+    const parsed = changePasswordSchema.safeParse(await c.req.json());
+    if (!parsed.success) {
+        return c.json(formatError('VALIDATION_ERROR', parsed.error.issues[0].message, requestId), 400);
+    }
+
+    const passwordHash = await hashPassword(parsed.data.password);
+    const [user] = await db
+        .update(usersTable)
+        .set({ passwordHash, updatedAt: new Date() })
+        .where(eq(usersTable.id, id))
+        .returning(publicUserColumns);
+    if (!user) {
+        return c.json(formatError('NOT_FOUND', 'User not found', requestId), 404);
+    }
+
+    const revokedSessions = await db
+        .update(ssoSessionsTable)
+        .set({ status: 'revoked', revokedAt: new Date(), revokeReason: 'password_change' })
+        .where(and(eq(ssoSessionsTable.userId, id), eq(ssoSessionsTable.status, 'active')))
+        .returning({ id: ssoSessionsTable.id });
+
+    await db
+        .update(accessTokensTable)
+        .set({ status: 'revoked', revokedAt: new Date() })
+        .where(and(eq(accessTokensTable.userId, id), eq(accessTokensTable.status, 'active')));
+
+    await logAuditEvent({
+        eventType: 'user.password_change',
+        result: 'success',
+        userId: id,
+        actorId: c.get('userId'),
+        metadata: { revokedSessionCount: revokedSessions.length },
+    });
+
+    publishPasswordChanged({
+        eventType: 'PasswordChanged',
+        userId: id,
+        changedAt: new Date().toISOString(),
     });
 
     return c.json({ data: user });
