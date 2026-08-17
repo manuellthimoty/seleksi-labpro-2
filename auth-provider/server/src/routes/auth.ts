@@ -74,3 +74,5 @@ auth.post('/login',async (c) =>{
     return c.json({ data: { id: user.id, name: user.name, email: user.email } });
 })
 
+export default auth;
+
