@@ -10,6 +10,7 @@ import { hashToken } from '../lib/token-hash.js';
 import { formatError } from '../lib/error.js';
 import { logAuditEvent } from '../lib/audit-log.js';
 import type { AppEnv } from '../lib/hono-env.js';
+import { isUserActive } from '../repo/users.js';
 
 const token = new Hono<AppEnv>();
 
@@ -56,6 +57,10 @@ token.post('/token', async (c) => {
 
     if (!authCode) {
         return c.json(formatError('INVALID_GRANT', 'Authorization code is invalid', requestId), 400);
+    }
+
+    if(!(await isUserActive(authCode.userId))){
+        return c.json(formatError('INVALID_GRANT','user is not active',requestId),400);
     }
     if (authCode.usedAt) {
         // code dipakai 2x (maybe indikasi kebocoran/replay)
