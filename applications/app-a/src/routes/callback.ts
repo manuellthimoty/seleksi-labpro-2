@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import type { AppEnv } from "../lib/hono-env.js";
@@ -6,7 +6,6 @@ import { db } from "../db/index.js";
 import { localSessionsTable, profileCacheTable } from "../db/schema/index.js";
 import { exchangeCodeForToken, fetchUserinfo, AuthProviderError } from "../lib/auth-provider-client.js";
 import { generateSessionToken, hashSessionToken } from "../lib/session-token.js";
-import { formatError } from "../lib/error.js";
 import { logActivity } from "../lib/activity-log.js";
 
 const callback = new Hono<AppEnv>();
@@ -23,6 +22,13 @@ interface PendingOauth {
     codeVerifier: string;
 }
 
+function redirectWithError(c: Context<AppEnv>, code: string, message: string) {
+    const url = new URL('/', new URL(c.req.url).origin);
+    url.searchParams.set('error', code);
+    url.searchParams.set('message', message);
+    return c.redirect(url.toString(), 302);
+}
+
 callback.get('/auth/callback', async (c) => {
     const requestId = c.get('requestId');
 
@@ -32,18 +38,18 @@ callback.get('/auth/callback', async (c) => {
     const errorParam = c.req.query('error');
     if (errorParam) {
         logActivity('oauth.callback.denied', `Auth Provider menolak login: ${errorParam}`, requestId);
-        return c.json(formatError('ACCESS_DENIED', 'Login ditolak oleh Auth Provider', requestId), 403);
+        return redirectWithError(c, 'ACCESS_DENIED', 'Login ditolak oleh Auth Provider.');
     }
 
     const parsed = callbackQuerySchema.safeParse(c.req.query());
     if (!parsed.success) {
-        return c.json(formatError('VALIDATION_ERROR', parsed.error.issues[0].message, requestId), 400);
+        return redirectWithError(c, 'VALIDATION_ERROR', 'Callback tidak valid, silakan login ulang.');
     }
     const { code, state } = parsed.data;
 
     if (!pendingRaw) {
         logActivity('oauth.callback.rejected', 'oauth_pending cookie tidak ada (hilang/kedaluwarsa)', requestId);
-        return c.json(formatError('INVALID_STATE', 'Sesi login sudah kedaluwarsa, silakan login ulang', requestId), 400);
+        return redirectWithError(c, 'INVALID_STATE', 'Sesi login sudah kedaluwarsa, silakan login ulang.');
     }
 
     let pending: PendingOauth;
@@ -51,12 +57,12 @@ callback.get('/auth/callback', async (c) => {
         pending = JSON.parse(pendingRaw) as PendingOauth;
     } catch {
         logActivity('oauth.callback.rejected', 'oauth_pending cookie rusak', requestId);
-        return c.json(formatError('INVALID_STATE', 'Sesi login tidak valid, silahkan login ulang', requestId), 400);
+        return redirectWithError(c, 'INVALID_STATE', 'Sesi login tidak valid, silakan login ulang.');
     }
 
     if (pending.state !== state) { // ga cocok
-        logActivity('oauth.callback.rejected', 'state tidak cocok — potensi CSRF', requestId);
-        return c.json(formatError('INVALID_STATE', 'state tidak cocok', requestId), 400);
+        logActivity('oauth.callback.rejected', 'state tidak cocok', requestId);
+        return redirectWithError(c, 'INVALID_STATE', 'state tidak cocok, silakan login ulang.');
     }
 
     logActivity('oauth.callback.received', 'Menerima authorization code dari Auth Provider', requestId);
@@ -67,7 +73,7 @@ callback.get('/auth/callback', async (c) => {
     } catch (err) {
         const message = err instanceof AuthProviderError ? err.message : 'Gagal menukar authorization code ke token';
         logActivity('oauth.token.failed', message, requestId);
-        return c.json(formatError('TOKEN_EXCHANGE_FAILED', message, requestId), 400);
+        return redirectWithError(c, 'TOKEN_EXCHANGE_FAILED', 'Gagal login, silakan coba lagi.');
     }
     logActivity('oauth.token.received', 'Access token diterima dari Auth Provider', requestId);
 
@@ -77,7 +83,7 @@ callback.get('/auth/callback', async (c) => {
     } catch (err) {
         const message = err instanceof AuthProviderError ? err.message : 'Gagal mengambil identitas user';
         logActivity('oauth.userinfo.failed', message, requestId);
-        return c.json(formatError('USERINFO_FAILED', message, requestId), 400);
+        return redirectWithError(c, 'USERINFO_FAILED', 'Gagal mengambil identitas user, silakan coba lagi.');
     }
     logActivity('oauth.userinfo.received', `Identitas diterima: ${userinfo.email}`, requestId);
 
