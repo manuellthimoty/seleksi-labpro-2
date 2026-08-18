@@ -26,6 +26,7 @@ export interface UserinfoResponse {
   email: string;
   name: string;
   groups: string[];
+  sid: string;
 }
 
 async function parseErrorBody(res: Response): Promise<{ code: string; message: string }> {
@@ -77,7 +78,6 @@ export async function fetchUserinfo(accessToken: string): Promise<UserinfoRespon
 
   return res.json() as Promise<UserinfoResponse>;
 }
-
 export function getAuthorizeUrl(params: { state: string; codeChallenge: string; redirectUri?: string }): string {
   const url = new URL("/authorize", AUTH_PROVIDER_URL);
   url.searchParams.set("response_type", "code");

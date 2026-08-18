@@ -26,6 +26,7 @@ export interface UserinfoResponse {
   email: string;
   name: string;
   groups: string[];
+  sid: string;
 }
 
 async function parseErrorBody(res: Response): Promise<{ code: string; message: string }> {

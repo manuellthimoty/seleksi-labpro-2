@@ -61,6 +61,8 @@ userinfo.get('/userinfo', async (c) => {
         email: user.email,
         name: user.name,
         groups: memberGroups.map((g) => g.name),
+        // diapke App A/B buat ngisi local_sessions.central_session_id
+        sid: accessToken.ssoSessionId,
     });
 });
 
