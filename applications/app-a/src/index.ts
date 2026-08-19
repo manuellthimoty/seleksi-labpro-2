@@ -6,6 +6,7 @@ import home from './routes/home.js';
 import login from './routes/login.js';
 import callback from './routes/callback.js';
 import logout from './routes/logout.js';
+import internal from './routes/internal.js';
 
 const app = new Hono<AppEnv>();
 
@@ -15,6 +16,7 @@ app.route('/', home);
 app.route('/', login);
 app.route('/', callback);
 app.route('/', logout);
+app.route('/', internal);
 
 const port = Number(process.env.PORT) || 4000;
 
