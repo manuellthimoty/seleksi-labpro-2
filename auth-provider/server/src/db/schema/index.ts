@@ -8,3 +8,5 @@ export * from './sso-sessions.js';
 export * from './authorization-codes.js';
 export * from './access-tokens.js';
 export * from './audit-logs.js';
+export * from './events.js';
+export * from './event-deliveries.js';
