@@ -11,6 +11,7 @@ import logout from './routes/logout.js';
 import users from './routes/users.js';
 import groups from './routes/groups.js';
 import applications from './routes/applications.js';
+import { startEventPublisher } from './lib/event-publisher.js';
 
 const app = new Hono<AppEnv>();
 
@@ -45,3 +46,12 @@ serve({
 });
 
 console.log(`Auth listening on port ${port}`);
+
+const stopEventPublisher = process.env.EVENT_PUBLISHER_ENABLED === 'false' ? null : startEventPublisher();
+
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+    process.on(signal, async () => {
+        await stopEventPublisher?.();
+        process.exit(0);
+    });
+}

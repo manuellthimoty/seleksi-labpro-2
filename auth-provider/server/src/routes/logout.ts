@@ -8,7 +8,7 @@ import { verifyPassword } from '../lib/password.js';
 import { hashToken } from '../lib/token-hash.js';
 import { formatError } from '../lib/error.js';
 import { logAuditEvent } from '../lib/audit-log.js';
-import { publishSessionRevoked } from '../lib/events.js';
+import { recordEvent } from '../lib/events.js';
 import type { AppEnv } from '../lib/hono-env.js';
 
 const logout = new Hono<AppEnv>();
@@ -74,34 +74,44 @@ logout.post('/logout/sso', async (c) => {
     }
 
     const tokenHash = hashToken(sessionToken);
-    const [session] = await db
-        .update(ssoSessionsTable)
-        .set({ status: 'revoked', revokedAt: new Date(), revokeReason: 'user_logout' })
-        .where(and(eq(ssoSessionsTable.sessionTokenHash, tokenHash), eq(ssoSessionsTable.status, 'active')))
-        .returning({ id: ssoSessionsTable.id, userId: ssoSessionsTable.userId });
 
-    if (!session) {
+    const revoked = await db.transaction(async (tx) => {
+        const [session] = await tx
+            .update(ssoSessionsTable)
+            .set({ status: 'revoked', revokedAt: new Date(), revokeReason: 'user_logout' })
+            .where(and(eq(ssoSessionsTable.sessionTokenHash, tokenHash), eq(ssoSessionsTable.status, 'active')))
+            .returning({ id: ssoSessionsTable.id, userId: ssoSessionsTable.userId });
+
+        if (!session) {
+            return null;
+        }
+
+        await tx
+            .update(accessTokensTable)
+            .set({ status: 'revoked', revokedAt: new Date() })
+            .where(and(eq(accessTokensTable.ssoSessionId, session.id), eq(accessTokensTable.status, 'active')));
+
+        const event = await recordEvent(tx, {
+            eventType: 'SessionRevoked',
+            userId: session.userId,
+            centralSessionId: session.id,
+            reason: 'sso_logout',
+            metadata: { revokedBy: 'user' },
+        });
+
+        return { session, event };
+    });
+
+    if (!revoked) {
         return c.body(null, 204);
     }
-
-    await db
-        .update(accessTokensTable)
-        .set({ status: 'revoked', revokedAt: new Date() })
-        .where(and(eq(accessTokensTable.ssoSessionId, session.id), eq(accessTokensTable.status, 'active')));
 
     await logAuditEvent({
         eventType: 'sso_session.revoke',
         result: 'success',
-        userId: session.userId,
-        sessionId: session.id,
-    });
-
-    publishSessionRevoked({
-        eventType: 'SessionRevoked',
-        sessionId: session.id,
-        userId: session.userId,
-        revokedAt: new Date().toISOString(),
-        reason: 'user_logout',
+        userId: revoked.session.userId,
+        sessionId: revoked.session.id,
+        metadata: { eventId: revoked.event.eventId },
     });
 
     return c.body(null, 204);

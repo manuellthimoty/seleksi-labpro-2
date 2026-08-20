@@ -14,7 +14,7 @@ import {
 import { hashPassword } from '../lib/password.js';
 import { formatError } from '../lib/error.js';
 import { logAuditEvent } from '../lib/audit-log.js';
-import { publishPasswordChanged } from '../lib/events.js';
+import { recordEvent } from '../lib/events.js';
 import type { AppEnv } from '../lib/hono-env.js';
 
 const users = new Hono<AppEnv>();
@@ -123,24 +123,59 @@ users.patch('/:id/status', async (c) => {
     if (!parsed.success) {
         return c.json(formatError('VALIDATION_ERROR', parsed.error.issues[0].message, requestId), 400);
     }
+    const { status } = parsed.data;
 
-    const [user] = await db
-        .update(usersTable)
-        .set({ status: parsed.data.status, updatedAt: new Date() })
-        .where(eq(usersTable.id, id))
-        .returning(publicUserColumns);
-    if (!user) {
+    const result = await db.transaction(async (tx) => {
+        const [user] = await tx
+            .update(usersTable)
+            .set({ status, updatedAt: new Date() })
+            .where(eq(usersTable.id, id))
+            .returning(publicUserColumns);
+        if (!user) {
+            return null;
+        }
+
+        if (status === 'active') {
+            return { user, revokedSessionCount: 0 };
+        }
+
+        const revokedSessions = await tx
+            .update(ssoSessionsTable)
+            .set({ status: 'revoked', revokedAt: new Date(), revokeReason: 'user_deactivated' })
+            .where(and(eq(ssoSessionsTable.userId, id), eq(ssoSessionsTable.status, 'active')))
+            .returning({ id: ssoSessionsTable.id });
+
+        await tx
+            .update(accessTokensTable)
+            .set({ status: 'revoked', revokedAt: new Date() })
+            .where(and(eq(accessTokensTable.userId, id), eq(accessTokensTable.status, 'active')));
+
+        for (const session of revokedSessions) {
+            await recordEvent(tx, {
+                eventType: 'SessionRevoked',
+                userId: id,
+                centralSessionId: session.id,
+                reason: 'user_deactivated',
+                metadata: { revokedBy: 'admin' },
+            });
+        }
+
+        return { user, revokedSessionCount: revokedSessions.length };
+    });
+
+    if (!result) {
         return c.json(formatError('NOT_FOUND', 'User not found', requestId), 404);
     }
 
     await logAuditEvent({
-        eventType: parsed.data.status === 'active'?'user.activate':'user.deactivate',
+        eventType: status === 'active' ? 'user.activate' : 'user.deactivate',
         result: 'success',
         userId: id,
         actorId: c.get('userId'),
+        metadata: { revokedSessionCount: result.revokedSessionCount },
     });
 
-    return c.json({ data: user });
+    return c.json({ data: result.user });
 });
 
 const changePasswordSchema = z.object({ password: z.string().min(8) });
@@ -154,41 +189,51 @@ users.patch('/:id/password', async (c) => {
     }
 
     const passwordHash = await hashPassword(parsed.data.password);
-    const [user] = await db
-        .update(usersTable)
-        .set({ passwordHash, updatedAt: new Date() })
-        .where(eq(usersTable.id, id))
-        .returning(publicUserColumns);
-    if (!user) {
+
+    const result = await db.transaction(async (tx) => {
+        const [user] = await tx
+            .update(usersTable)
+            .set({ passwordHash, updatedAt: new Date() })
+            .where(eq(usersTable.id, id))
+            .returning(publicUserColumns);
+        if (!user) {
+            return null;
+        }
+
+        const revokedSessions = await tx
+            .update(ssoSessionsTable)
+            .set({ status: 'revoked', revokedAt: new Date(), revokeReason: 'password_change' })
+            .where(and(eq(ssoSessionsTable.userId, id), eq(ssoSessionsTable.status, 'active')))
+            .returning({ id: ssoSessionsTable.id });
+
+        await tx
+            .update(accessTokensTable)
+            .set({ status: 'revoked', revokedAt: new Date() })
+            .where(and(eq(accessTokensTable.userId, id), eq(accessTokensTable.status, 'active')));
+
+        const event = await recordEvent(tx, {
+            eventType: 'PasswordChanged',
+            userId: id,
+            reason: 'password_changed',
+            metadata: { revokedSessionCount: revokedSessions.length },
+        });
+
+        return { user, revokedSessionCount: revokedSessions.length, event };
+    });
+
+    if (!result) {
         return c.json(formatError('NOT_FOUND', 'User not found', requestId), 404);
     }
-
-    const revokedSessions = await db
-        .update(ssoSessionsTable)
-        .set({ status: 'revoked', revokedAt: new Date(), revokeReason: 'password_change' })
-        .where(and(eq(ssoSessionsTable.userId, id), eq(ssoSessionsTable.status, 'active')))
-        .returning({ id: ssoSessionsTable.id });
-
-    await db
-        .update(accessTokensTable)
-        .set({ status: 'revoked', revokedAt: new Date() })
-        .where(and(eq(accessTokensTable.userId, id), eq(accessTokensTable.status, 'active')));
 
     await logAuditEvent({
         eventType: 'user.password_change',
         result: 'success',
         userId: id,
         actorId: c.get('userId'),
-        metadata: { revokedSessionCount: revokedSessions.length },
+        metadata: { revokedSessionCount: result.revokedSessionCount, eventId: result.event.eventId },
     });
 
-    publishPasswordChanged({
-        eventType: 'PasswordChanged',
-        userId: id,
-        changedAt: new Date().toISOString(),
-    });
-
-    return c.json({ data: user });
+    return c.json({ data: result.user });
 });
 
 const assignGroupsSchema = z.object({ groupIds: z.array(z.string().uuid()).min(1) });

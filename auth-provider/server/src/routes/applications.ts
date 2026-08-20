@@ -7,6 +7,8 @@ import { generateToken } from '../lib/token.js';
 import { hashPassword } from '../lib/password.js';
 import { formatError } from '../lib/error.js';
 import { logAuditEvent } from '../lib/audit-log.js';
+import { recordEvent, type DbExecutor } from '../lib/events.js';
+import { getGroupMemberIds, getUsersWithAccess } from '../lib/access-policy.js';
 import type { AppEnv } from '../lib/hono-env.js';
 
 const applications = new Hono<AppEnv>();
@@ -261,6 +263,37 @@ applications.get('/:id/policies', async (c) => {
     return c.json({ data: policies });
 });
 
+async function emitAccessLostEvents(
+    tx: DbExecutor,
+    params: {
+        applicationId: string;
+        groupId: string;
+        reason: string;
+        metadata: Record<string, unknown>;
+        applyChange: () => Promise<void>;
+    },
+): Promise<string[]> {
+    const memberIds = await getGroupMemberIds(tx, params.groupId);
+    const before = await getUsersWithAccess(tx, params.applicationId, memberIds);
+
+    await params.applyChange();
+
+    const after = await getUsersWithAccess(tx, params.applicationId, memberIds);
+    const lostAccess = memberIds.filter((userId) => before.has(userId) && !after.has(userId));
+
+    for (const userId of lostAccess) {
+        await recordEvent(tx, {
+            eventType: 'AccessPolicyChanged',
+            userId,
+            applicationId: params.applicationId,
+            reason: params.reason,
+            metadata: { groupId: params.groupId, ...params.metadata },
+        });
+    }
+
+    return lostAccess;
+}
+
 const assignPolicySchema = z.object({
     groupId: z.string().uuid(),
     effect: z.enum(['allow', 'deny']).default('allow'),
@@ -301,17 +334,31 @@ applications.post('/:id/policies', async (c) => {
         return c.json(formatError('POLICY_EXISTS', 'This group already has this policy for the application', requestId), 409);
     }
 
-    const [policy] = await db
-        .insert(applicationGroupPoliciesTable)
-        .values({ applicationId: id, groupId, effect })
-        .returning();
+    const { policy, lostAccess } = await db.transaction(async (tx) => {
+        let inserted!: typeof applicationGroupPoliciesTable.$inferSelect;
+
+        const lost = await emitAccessLostEvents(tx, {
+            applicationId: id,
+            groupId,
+            reason: 'policy_assigned',
+            metadata: { effect },
+            applyChange: async () => {
+                [inserted] = await tx
+                    .insert(applicationGroupPoliciesTable)
+                    .values({ applicationId: id, groupId, effect })
+                    .returning();
+            },
+        });
+
+        return { policy: inserted, lostAccess: lost };
+    });
 
     await logAuditEvent({
         eventType: 'application.policy.assign',
         result: 'success',
         applicationId: id,
         actorId: c.get('userId'),
-        metadata: { groupId, effect },
+        metadata: { groupId, effect, accessLostUserCount: lostAccess.length },
     });
 
     return c.json({ data: policy }, 201);
@@ -322,20 +369,33 @@ applications.delete('/:id/policies/:policyId', async (c) => {
     const id = c.req.param('id');
     const policyId = c.req.param('policyId');
 
-    const [deleted] = await db
-        .delete(applicationGroupPoliciesTable)
+    const [target] = await db
+        .select()
+        .from(applicationGroupPoliciesTable)
         .where(and(eq(applicationGroupPoliciesTable.id, policyId), eq(applicationGroupPoliciesTable.applicationId, id)))
-        .returning();
-    if (!deleted) {
+        .limit(1);
+    if (!target) {
         return c.json(formatError('NOT_FOUND', 'Policy not found', requestId), 404);
     }
+
+    const lostAccess = await db.transaction(async (tx) =>
+        emitAccessLostEvents(tx, {
+            applicationId: id,
+            groupId: target.groupId,
+            reason: 'policy_revoked',
+            metadata: { effect: target.effect },
+            applyChange: async () => {
+                await tx.delete(applicationGroupPoliciesTable).where(eq(applicationGroupPoliciesTable.id, policyId));
+            },
+        }),
+    );
 
     await logAuditEvent({
         eventType: 'application.policy.revoke',
         result: 'success',
         applicationId: id,
         actorId: c.get('userId'),
-        metadata: { groupId: deleted.groupId, effect: deleted.effect },
+        metadata: { groupId: target.groupId, effect: target.effect, accessLostUserCount: lostAccess.length },
     });
 
     return c.body(null, 204);
