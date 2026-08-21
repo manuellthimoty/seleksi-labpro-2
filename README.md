@@ -452,30 +452,39 @@ Exit code container setelah `docker compose stop` harus **0**. Kalau `137`, arti
 
 
 ### 1. Halaman login Auth Provider
+<img width="1057" height="778" alt="image" src="https://github.com/user-attachments/assets/3edfc2f6-e45d-4517-b506-670fb2f1e6d6" />
 
 
 
 ### 2. Control Panel Admin — daftar user
 
+<img width="2206" height="1184" alt="image" src="https://github.com/user-attachments/assets/f855fa88-4b15-45e9-9b5f-ce61cb963236" />
+
+<img width="2046" height="1328" alt="image" src="https://github.com/user-attachments/assets/fb7b6ef2-4ff0-45e8-b984-4dcc0e4a231e" />
+
+<img width="1414" height="1012" alt="image" src="https://github.com/user-attachments/assets/a0c2d7e2-f141-4a5e-93c8-8028b7dc4657" />
 
 
 ### 3. Control Panel Admin — detail aplikasi & policy
+<img width="2009" height="1066" alt="image" src="https://github.com/user-attachments/assets/a2a3eeb8-b497-4292-a6b0-c7e8c956a8be" />
 
+<img width="2293" height="1282" alt="image" src="https://github.com/user-attachments/assets/17a10c30-0524-4143-9db5-b40b4b2a98a8" />
 
 ### 4. App A setelah login (SSO berhasil)
+<img width="2087" height="1434" alt="image" src="https://github.com/user-attachments/assets/e31e2822-d33c-47e5-8cf2-c9dccce3e6b6" />
 
 
 ### 5. App B terbuka tanpa login ulang
-
+<img width="2041" height="1439" alt="image" src="https://github.com/user-attachments/assets/9d88b3f3-c12b-43a5-980e-06503d8ffd1f" />
 
 ### 6. Activity Log & Processed Events di App A
+<img width="2176" height="1439" alt="image" src="https://github.com/user-attachments/assets/7397ef1f-47e4-423f-9017-84bdecbe3864" />
 
 
 ### 7. RabbitMQ Management : antrian & DLQ
+<img width="1423" height="1015" alt="image" src="https://github.com/user-attachments/assets/190fc1fc-3d12-4256-a324-ac19131de37c" />
 
 
-### 8. Readiness probe 503 saat dependency mati (B03)
-
-
-### 9. Log graceful shutdown bertahap (B04)
+### 8. Readiness probe 503 saat dependency mati
+<img width="1241" height="548" alt="image" src="https://github.com/user-attachments/assets/d9ee0cf1-0857-42e2-8a28-fcf39c10ca2a" />
 
