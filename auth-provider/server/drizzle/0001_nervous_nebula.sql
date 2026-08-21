@@ -1,0 +1,2 @@
+ALTER TABLE "authorization_codes" ADD COLUMN "code_challenge" varchar NOT NULL;--> statement-breakpoint
+ALTER TABLE "authorization_codes" ADD COLUMN "code_challenge_method" varchar DEFAULT 'S256' NOT NULL;
