@@ -1,7 +1,19 @@
+import { Hono } from "hono";
+import { serve } from "@hono/node-server";
 import { connectRabbitMQ, consumeMainQueue } from "./lib/rabbitmq.js";
 import { handleMessage } from "./consumer.js";
 
+function startHealthServer() {
+    const app = new Hono();
+    app.get('/health', (c) => c.json({ status: 'ok' }));
+    const port = Number(process.env.HEALTH_PORT) || 3100;
+    serve({ fetch: app.fetch, port });
+    console.log(`[sync-worker] health check listening on port ${port}`);
+}
+
 async function main() {
+    startHealthServer();
+
     console.log("[sync-worker] connecting to RabbitMQ...");
     const { connection, channel } = await connectRabbitMQ();
 
@@ -23,7 +35,7 @@ async function main() {
                 await channel.close();
                 await connection.close();
             } catch {
-                //
+                // biasanya dh mati
             }
             process.exit(0);
         });

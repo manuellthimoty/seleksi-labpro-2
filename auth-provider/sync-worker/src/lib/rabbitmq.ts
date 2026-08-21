@@ -13,11 +13,35 @@ const RETRY_DELAY_MS = 30_000;
 const DLQ_EXCHANGE = "auth.events.dlq";
 const DLQ_QUEUE = "sync-worker.events.dlq";
 
+const CONNECT_MAX_ATTEMPTS = 30;
+const CONNECT_RETRY_DELAY_MS = 2000;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Healthcheck RabbitMQ ngasih tau node-nya hidup, TAPI listener AMQP di 5672
+ * bisa aja belum nerima koneksi pas kita nyoba connect (semacm race condition la), jadi percobaan
+ * pertama gampang kena ECONNREFUSED. Daripada mati, coba ulang beberapa kali.
+ */
 export async function connectRabbitMQ(): Promise<{ connection: ChannelModel; channel: Channel }> {
-    const connection = await amqp.connect(RABBITMQ_URL);
-    const channel = await connection.createChannel();
-    await assertTopology(channel);
-    return { connection, channel };
+    for (let attempt = 1; attempt <= CONNECT_MAX_ATTEMPTS; attempt += 1) {
+        try {
+            const connection = await amqp.connect(RABBITMQ_URL);
+            const channel = await connection.createChannel();
+            await assertTopology(channel);
+            return { connection, channel };
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            if (attempt === CONNECT_MAX_ATTEMPTS) {
+                throw new Error(`gagal connect ke RabbitMQ setelah ${attempt} percobaan: ${message}`);
+            }
+            console.warn(`[sync-worker] RabbitMQ belum siap (${message}), coba lagi ${attempt}/${CONNECT_MAX_ATTEMPTS}...`);
+            await sleep(CONNECT_RETRY_DELAY_MS);
+        }
+    }
+
+    // gak pernah kesampean
+    throw new Error("unreachable");
 }
 
 async function assertTopology(channel: Channel): Promise<void> {
