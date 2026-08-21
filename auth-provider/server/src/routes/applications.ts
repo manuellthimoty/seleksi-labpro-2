@@ -7,8 +7,7 @@ import { generateToken } from '../lib/token.js';
 import { hashPassword } from '../lib/password.js';
 import { formatError } from '../lib/error.js';
 import { logAuditEvent } from '../lib/audit-log.js';
-import { recordEvent, type DbExecutor } from '../lib/events.js';
-import { getGroupMemberIds, getUsersWithAccess } from '../lib/access-policy.js';
+import { emitAccessLostEvents } from '../lib/access-policy.js';
 import type { AppEnv } from '../lib/hono-env.js';
 
 const applications = new Hono<AppEnv>();
@@ -262,38 +261,6 @@ applications.get('/:id/policies', async (c) => {
 
     return c.json({ data: policies });
 });
-
-async function emitAccessLostEvents(
-    tx: DbExecutor,
-    params: {
-        applicationId: string;
-        groupId: string;
-        reason: string;
-        metadata: Record<string, unknown>;
-        applyChange: () => Promise<void>;
-    },
-): Promise<string[]> {
-    const memberIds = await getGroupMemberIds(tx, params.groupId);
-    const before = await getUsersWithAccess(tx, params.applicationId, memberIds);
-
-    await params.applyChange();
-
-    const after = await getUsersWithAccess(tx, params.applicationId, memberIds);
-    const lostAccess = memberIds.filter((userId) => before.has(userId) && !after.has(userId));
-
-    for (const userId of lostAccess) {
-        await recordEvent(tx, {
-            eventType: 'AccessPolicyChanged',
-            userId,
-            applicationId: params.applicationId,
-            reason: params.reason,
-            metadata: { groupId: params.groupId, ...params.metadata },
-        });
-    }
-
-    return lostAccess;
-}
-
 const assignPolicySchema = z.object({
     groupId: z.string().uuid(),
     effect: z.enum(['allow', 'deny']).default('allow'),

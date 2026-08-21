@@ -1,6 +1,6 @@
 import { and, eq, inArray } from 'drizzle-orm';
 import { applicationGroupPoliciesTable, userGroupsTable } from '../db/schema/index.js';
-import type { DbExecutor } from './events.js';
+import { recordEvent, type DbExecutor } from './events.js';
 
 export async function getGroupMemberIds(tx: DbExecutor, groupId: string): Promise<string[]> {
     const rows = await tx
@@ -39,4 +39,35 @@ export async function getUsersWithAccess(
     }
 
     return new Set([...allowed].filter((userId) => !denied.has(userId)));
+}
+
+export async function emitAccessLostEvents(
+    tx: DbExecutor,
+    params: {
+        applicationId: string;
+        groupId: string;
+        reason: string;
+        metadata: Record<string, unknown>;
+        applyChange: () => Promise<void>;
+    },
+): Promise<string[]> {
+    const memberIds = await getGroupMemberIds(tx, params.groupId);
+    const before = await getUsersWithAccess(tx, params.applicationId, memberIds);
+
+    await params.applyChange();
+
+    const after = await getUsersWithAccess(tx, params.applicationId, memberIds);
+    const lostAccess = memberIds.filter((userId) => before.has(userId) && !after.has(userId));
+
+    for (const userId of lostAccess) {
+        await recordEvent(tx, {
+            eventType: 'AccessPolicyChanged',
+            userId,
+            applicationId: params.applicationId,
+            reason: params.reason,
+            metadata: { groupId: params.groupId, ...params.metadata },
+        });
+    }
+
+    return lostAccess;
 }

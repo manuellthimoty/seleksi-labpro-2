@@ -15,6 +15,7 @@ import { hashPassword } from '../lib/password.js';
 import { formatError } from '../lib/error.js';
 import { logAuditEvent } from '../lib/audit-log.js';
 import { recordEvent } from '../lib/events.js';
+import { setUserStatus } from '../lib/user-status.js';
 import type { AppEnv } from '../lib/hono-env.js';
 
 const users = new Hono<AppEnv>();
@@ -126,44 +127,7 @@ users.patch('/:id/status', async (c) => {
     }
     const { status } = parsed.data;
 
-    const result = await db.transaction(async (tx) => {
-        const [user] = await tx
-            .update(usersTable)
-            .set({ status, updatedAt: new Date() })
-            .where(eq(usersTable.id, id))
-            .returning(publicUserColumns);
-        if (!user) {
-            return null;
-        }
-
-        if (status === 'active') {
-            return { user, revokedSessionCount: 0 };
-        }
-
-        const revokedSessions = await tx
-            .update(ssoSessionsTable)
-            .set({ status: 'revoked', revokedAt: new Date(), revokeReason: 'user_deactivated' })
-            .where(and(eq(ssoSessionsTable.userId, id), eq(ssoSessionsTable.status, 'active')))
-            .returning({ id: ssoSessionsTable.id });
-
-        await tx
-            .update(accessTokensTable)
-            .set({ status: 'revoked', revokedAt: new Date() })
-            .where(and(eq(accessTokensTable.userId, id), eq(accessTokensTable.status, 'active')));
-
-        for (const session of revokedSessions) {
-            await recordEvent(tx, {
-                eventType: 'SessionRevoked',
-                userId: id,
-                centralSessionId: session.id,
-                reason: 'user_deactivated',
-                metadata: { revokedBy: 'admin' },
-            });
-        }
-
-        return { user, revokedSessionCount: revokedSessions.length };
-    });
-
+    const result = await setUserStatus(id, status);
     if (!result) {
         return c.json(formatError('NOT_FOUND', 'User not found', requestId), 404);
     }
