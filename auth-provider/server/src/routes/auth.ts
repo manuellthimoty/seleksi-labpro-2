@@ -19,6 +19,13 @@ const SESSION_TTL_MS = 7*24*60*60*1000;
 
 const auth = new Hono<AppEnv>();
 
+// Login gagal wajib ninggalin jejak: tanpa ini percobaan brute force gak
+// keliatan sama sekali di audit log. userId cuma diisi kalau emang ketemu,
+// biar email ngasal gak bikin baris dengan user_id ngambang.
+async function logLoginFailure(reason: string, userId?: string, ipAddress?: string) {
+    await logAuditEvent({ eventType: 'user.login', result: 'failure', userId, ipAddress, metadata: { reason } });
+}
+
 const PostLoginSchema = z.object({
     email : z.string(),
     password : z.string(),
@@ -34,14 +41,17 @@ auth.post('/login',async (c) =>{
 
     const [user] = await db.select().from(usersTable).where(eq(usersTable.email,email));
     if(!user){
+        await logLoginFailure('user_not_found', undefined, c.req.header('x-forwarded-for'));
         return c.json(formatError('INVALID_CREDENTIALS', 'Email or password is incorrect', requestId), 401);
     }
     const rightPassword = await verifyPassword(password,user.passwordHash);
     if(!rightPassword){
+        await logLoginFailure('wrong_password', user.id, c.req.header('x-forwarded-for'));
         return c.json(formatError('INVALID_CREDENTIALS', 'Email or password is incorrect', requestId), 401);
     }
 
     if(user.status === 'inactive'){
+        await logLoginFailure('account_inactive', user.id, c.req.header('x-forwarded-for'));
         return c.json(formatError('ACCOUNT_INACTIVE', 'Email or password is incorrect', requestId), 403);
     }
 
@@ -72,7 +82,8 @@ auth.post('/login',async (c) =>{
         ipAddress: c.req.header('x-forwarded-for'),
     });
 
-    return c.json({ data: { id: user.id, name: user.name, email: user.email } });
+    // role ikut dibalikin biar halaman login tau harus ngelempar admin ke Control Panel
+    return c.json({ data: { id: user.id, name: user.name, email: user.email, role: user.role } });
 })
 
 // cuma izinin path relatif satu-slash, tolak "//evil.com" (protocol-relative) cegah open redirect
@@ -108,7 +119,12 @@ auth.get('/login', (c) => {
                 body: JSON.stringify({ email: form.email.value, password: form.password.value }),
             });
             if (res.ok) {
-                window.location.href = form.dataset.redirectTo;
+                const body = await res.json().catch(() => null);
+                const target = form.dataset.redirectTo;
+                // admin yang login tanpa tujuan khusus langsung dibawa ke Control Panel;
+                // kalau datang dari /authorize, tujuan aslinya tetap diutamakan
+                const isAdmin = body && body.data && body.data.role === 'admin';
+                window.location.href = (target === '/' && isAdmin) ? '/admin' : target;
                 return;
             }
             const body = await res.json().catch(() => null);
