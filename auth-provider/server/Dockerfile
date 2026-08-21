@@ -22,4 +22,4 @@ COPY auth-provider/server/drizzle ./auth-provider/server/drizzle
 
 WORKDIR /app/auth-provider/server
 EXPOSE 3000
-CMD ["sh", "-c", "node dist/db/migrate.js && node dist/index.js"]
+CMD ["sh", "-c", "node dist/db/migrate.js && node dist/db/seed.js && node dist/index.js"]
