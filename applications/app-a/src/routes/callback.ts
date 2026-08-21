@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
+import { SESSION_COOKIE, PENDING_COOKIE } from "../lib/cookie-names.js";
 import type { AppEnv } from "../lib/hono-env.js";
 import { db } from "../db/index.js";
 import { localSessionsTable, profileCacheTable } from "../db/schema/index.js";
@@ -29,11 +30,11 @@ function redirectWithError(c: Context<AppEnv>, code: string, message: string) {
     return c.redirect(url.toString(), 302);
 }
 
-callback.get('/auth/callback', async (c) => {
+callback.get('/callback', async (c) => {
     const requestId = c.get('requestId');
 
-    const pendingRaw = getCookie(c, 'oauth_pending');
-    deleteCookie(c, 'oauth_pending', { path: '/' });
+    const pendingRaw = getCookie(c, PENDING_COOKIE);
+    deleteCookie(c, PENDING_COOKIE, { path: '/' });
 
     const errorParam = c.req.query('error');
     if (errorParam) {
@@ -121,7 +122,7 @@ callback.get('/auth/callback', async (c) => {
         lastActivityAt: now,
     });
 
-    setCookie(c, 'local_session', rawSessionToken, {
+    setCookie(c, SESSION_COOKIE, rawSessionToken, {
         httpOnly: true,
         secure: true,
         sameSite: 'Lax',
