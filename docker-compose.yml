@@ -24,12 +24,17 @@ services:
       - "${RABBITMQ_PORT}:5672"
       - "${RABBITMQ_MANAGEMENT_PORT}:15672"
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      # ping cuma ngecek node Erlang hidup
+      # listener AMQP di 5672 udah beneran nerima koneksi
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
       interval: 5s
       timeout: 5s
       retries: 10
 
   server:
+    # default docker cuma 10s, lebih pendek dari SHUTDOWN_TIMEOUT_MS (15s),
+    # jadi shutdown rapinya bakal keburu dipotong SIGKILL
+    stop_grace_period: 30s
     build:
       context: .
       dockerfile: auth-provider/server/Dockerfile
@@ -39,24 +44,50 @@ services:
       PORT: ${SERVER_PORT}
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/auth_server
       RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672
+      # endpoint /health/slow buat mendemokan graceful shutdown; default mati
+      ENABLE_SHUTDOWN_DEMO: ${ENABLE_SHUTDOWN_DEMO:-false}
+      # berapa lama nunggu request in-flight selesai sebelum ditutup paksa
+      SHUTDOWN_TIMEOUT_MS: ${SHUTDOWN_TIMEOUT_MS:-15000}
     depends_on:
       postgres:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+    healthcheck:
+      # sengaja liveness, bukan readiness: dependency yang lagi ngadat gak
+      # boleh bikin container ini dinyatakan unhealthy lalu di-restart percuma
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:$$PORT/health/live || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   sync-worker:
+    restart: on-failure
+    # default docker cuma 10s, lebih pendek dari SHUTDOWN_TIMEOUT_MS (15s),
+    # jadi shutdown rapinya bakal keburu dipotong SIGKILL
+    stop_grace_period: 30s
     build:
       context: .
       dockerfile: auth-provider/sync-worker/Dockerfile
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/auth_server
       RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672
+      INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET}
+      HEALTH_PORT: 3100
+      # bikin handler sengaja lambat buat mendemokan graceful shutdown; default 0 (mati)
+      SYNC_WORKER_DEMO_DELAY_MS: ${SYNC_WORKER_DEMO_DELAY_MS:-0}
+      # berapa lama nunggu pesan in-flight selesai sebelum dibalikin ke queue
+      SHUTDOWN_TIMEOUT_MS: ${SHUTDOWN_TIMEOUT_MS:-15000}
     depends_on:
       postgres:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:$$HEALTH_PORT/health/live || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   app-a:
     build:
@@ -67,9 +98,27 @@ services:
     environment:
       PORT: ${APP_A_PORT}
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/app_a
+      INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET}
+      # PUBLIC_URL: dipakai browser (redirect ke /authorize) -> host-mapped port
+      # INTERNAL_URL: dipakai App A sendiri manggil /token & /userinfo (back-channel) -> hostname service docker
+      AUTH_PROVIDER_PUBLIC_URL: http://localhost:${SERVER_PORT}
+      AUTH_PROVIDER_INTERNAL_URL: http://server:${SERVER_PORT}
+      OAUTH_CLIENT_ID: app-a
+      OAUTH_CLIENT_SECRET: app-a-secret
+      OAUTH_REDIRECT_URI: http://localhost:${APP_A_PORT}/callback
+      # nama cookie harus beda antar app, browser gak misahin cookie per port,
+      # jadi tanpa ini App A dan App B rebutan cookie yang sama di domain localhost
+      COOKIE_PREFIX: app_a
     depends_on:
       postgres:
         condition: service_healthy
+      server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:$$PORT/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   app-b:
     build:
@@ -80,9 +129,25 @@ services:
     environment:
       PORT: ${APP_B_PORT}
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/app_b
+      INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET}
+      AUTH_PROVIDER_PUBLIC_URL: http://localhost:${SERVER_PORT}
+      AUTH_PROVIDER_INTERNAL_URL: http://server:${SERVER_PORT}
+      OAUTH_CLIENT_ID: app-b
+      OAUTH_CLIENT_SECRET: app-b-secret
+      OAUTH_REDIRECT_URI: http://localhost:${APP_B_PORT}/callback
+      # nama cookie harus beda antar app, browser gak misahin cookie per port,
+      # jadi tanpa ini App A dan App B rebutan cookie yang sama di domain localhost
+      COOKIE_PREFIX: app_b
     depends_on:
       postgres:
         condition: service_healthy
+      server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:$$PORT/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 volumes:
   postgres-data:
