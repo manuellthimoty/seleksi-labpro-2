@@ -12,6 +12,8 @@ const app = new Hono<AppEnv>();
 
 app.use('*', requestId);
 
+app.get('/health', (c) => c.json({ status: 'ok' }));
+
 app.route('/', home);
 app.route('/', login);
 app.route('/', callback);
