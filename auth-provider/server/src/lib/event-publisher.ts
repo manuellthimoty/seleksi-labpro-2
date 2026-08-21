@@ -34,6 +34,14 @@ async function getChannel(): Promise<ConfirmChannel> {
     return ch;
 }
 
+/**
+ * Dipakai readiness probe. Make ulang koneksi publisher kalau masih hidup;
+ * kalau udah putus, dia nyoba connect baru 
+ */
+export async function pingBroker(): Promise<void> {
+    await getChannel();
+}
+
 async function publishWithConfirm(payload: EventPayload): Promise<void> {
     const ch = await getChannel();
     await new Promise<void>((resolve, reject) => {
