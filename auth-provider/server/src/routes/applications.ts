@@ -36,7 +36,7 @@ const createApplicationSchema = z.object({
     name: z.string().min(1),
     redirectUris: z.array(z.string().url()).min(1),
     launchUrl: z.string().url(),
-    logoutNotificationUrl: z.string().url().optional(),
+    logoutNotificationUrl: z.string().url(),
 });
 
 applications.post('/', async (c) => {

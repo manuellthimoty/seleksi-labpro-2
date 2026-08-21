@@ -10,9 +10,20 @@ import {
   applicationGroupPoliciesTable,
 } from "./schema/index.js";
 
-async function getOrCreateUser(input: { name: string; email: string; password: string; status?: "active" | "inactive" }) {
+async function getOrCreateUser(input: { name: string; email: string; password: string; status?: "active" | "inactive"; role?: "user" | "admin" }) {
   const existing = await db.select().from(usersTable).where(eq(usersTable.email, input.email));
-  if (existing[0]) return existing[0];
+  if (existing[0]) {
+    // re-seed di DB yang udah ada duluan sebelum kolom role dipakai -- pastiin tetep keisi
+    if (input.role && existing[0].role !== input.role) {
+      const [updated] = await db
+        .update(usersTable)
+        .set({ role: input.role })
+        .where(eq(usersTable.id, existing[0].id))
+        .returning();
+      return updated;
+    }
+    return existing[0];
+  }
 
   const passwordHash = await argon2.hash(input.password);
   const [row] = await db
@@ -22,6 +33,7 @@ async function getOrCreateUser(input: { name: string; email: string; password: s
       email: input.email,
       passwordHash,
       status: input.status ?? "active",
+      role: input.role ?? "user",
     })
     .returning();
   return row;
@@ -52,6 +64,7 @@ async function getOrCreateApplication(input: {
   clientSecret: string;
   launchUrl: string;
   redirectUri: string;
+  logoutNotificationUrl: string;
 }) {
   const existing = await db.select().from(applicationsTable).where(eq(applicationsTable.clientId, input.clientId));
   let application = existing[0];
@@ -65,8 +78,15 @@ async function getOrCreateApplication(input: {
         clientId: input.clientId,
         clientSecretHash,
         launchUrl: input.launchUrl,
+        logoutNotificationUrl: input.logoutNotificationUrl,
         status: "active",
       })
+      .returning();
+  } else if (application.logoutNotificationUrl !== input.logoutNotificationUrl) {
+    [application] = await db
+      .update(applicationsTable)
+      .set({ logoutNotificationUrl: input.logoutNotificationUrl })
+      .where(eq(applicationsTable.id, application.id))
       .returning();
   }
 
@@ -104,7 +124,7 @@ async function main() {
   const adminsGroup = await getOrCreateGroup({ name: "admins", description: "Full access administrators" });
   const usersGroup = await getOrCreateGroup({ name: "users", description: "Regular end users" });
 
-  const admin = await getOrCreateUser({ name: "Admin", email: "admin@example.com", password: "Admin123!" });
+  const admin = await getOrCreateUser({ name: "Admin", email: "admin@example.com", password: "Admin123!", role: "admin" });
   await addUserToGroup(admin.id, adminsGroup.id);
 
   const dummyUsers = await Promise.all([
@@ -122,6 +142,7 @@ async function main() {
     clientSecret: "app-a-secret",
     launchUrl: "http://localhost:4000",
     redirectUri: "http://localhost:4000/callback",
+    logoutNotificationUrl: "http://app-a:4000/internal/logout",
   });
   const appB = await getOrCreateApplication({
     name: "App B",
@@ -129,6 +150,7 @@ async function main() {
     clientSecret: "app-b-secret",
     launchUrl: "http://localhost:5000",
     redirectUri: "http://localhost:5000/callback",
+    logoutNotificationUrl: "http://app-b:5000/internal/logout",
   });
 
   await allowGroupForApplication(appA.id, adminsGroup.id);

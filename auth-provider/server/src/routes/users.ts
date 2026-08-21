@@ -24,6 +24,7 @@ const publicUserColumns = {
     name: usersTable.name,
     email: usersTable.email,
     status: usersTable.status,
+    role: usersTable.role,
     createdAt: usersTable.createdAt,
     updatedAt: usersTable.updatedAt,
 };

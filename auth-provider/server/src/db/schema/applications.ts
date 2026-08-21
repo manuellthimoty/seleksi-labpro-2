@@ -9,7 +9,7 @@ export const applicationsTable = pgTable("applications", {
   clientSecretHash: varchar('client_secret_hash').notNull(),
   status: applicationStatusEnum().notNull().default('active'),
   launchUrl: varchar('launch_url').notNull(),
-  logoutNotificationUrl: varchar('logout_notification_url'),
+  logoutNotificationUrl: varchar('logout_notification_url').notNull(),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
