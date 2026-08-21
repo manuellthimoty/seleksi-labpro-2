@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { html } from "hono/html";
 import { getCookie } from "hono/cookie";
+import { SESSION_COOKIE } from "../lib/cookie-names.js";
 import { desc, eq } from "drizzle-orm";
 import type { AppEnv } from "../lib/hono-env.js";
 import { db } from "../db/index.js";
@@ -17,7 +18,7 @@ function formatDate(date: Date): string {
 }
 
 home.get('/', async (c) => {
-    const sessionToken = getCookie(c, 'local_session');
+    const sessionToken = getCookie(c, SESSION_COOKIE);
     const result = await checkLocalSession(sessionToken);
 
     const errorCode = c.req.query('error');

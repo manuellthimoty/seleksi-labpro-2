@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { setCookie } from "hono/cookie";
+import { PENDING_COOKIE } from "../lib/cookie-names.js";
 import type { AppEnv } from "../lib/hono-env.js";
 import { generateState } from "../lib/oauth-state.js";
 import { generatePkcePair } from "../lib/pkce.js";
@@ -21,7 +22,7 @@ login.get('/login', async (c) => {
     const state = generateState();
     const { codeVerifier, codeChallenge } = generatePkcePair();
 
-    setCookie(c, 'oauth_pending', JSON.stringify({ state, codeVerifier }), {
+    setCookie(c, PENDING_COOKIE, JSON.stringify({ state, codeVerifier }), {
         httpOnly: true,
         secure: true,
         sameSite: 'Lax',

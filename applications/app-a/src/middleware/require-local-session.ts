@@ -1,5 +1,6 @@
 import { createMiddleware } from "hono/factory";
 import { getCookie, deleteCookie } from "hono/cookie";
+import { SESSION_COOKIE } from "../lib/cookie-names.js";
 import type { AppEnv } from "../lib/hono-env.js";
 import { checkLocalSession, type LocalSessionInvalidReason } from "../lib/local-session.js";
 import { logActivity } from "../lib/activity-log.js";
@@ -12,12 +13,12 @@ const REASON_MESSAGES: Record<LocalSessionInvalidReason, string> = {
 };
 
 export const requireLocalSession = createMiddleware<AppEnv>(async (c, next) => {
-    const sessionToken = getCookie(c, "local_session");
+    const sessionToken = getCookie(c, SESSION_COOKIE);
     const result = await checkLocalSession(sessionToken);
 
     if (!result.ok) {
         // cookie basi gak ada gunanya lagi disimpen di browser
-        deleteCookie(c, "local_session", { path: "/" });
+        deleteCookie(c, SESSION_COOKIE, { path: "/" });
 
         if (result.reason !== "missing") {
             logActivity("local_session.rejected", `Akses ditolak: ${result.reason}`, c.get("requestId"));
