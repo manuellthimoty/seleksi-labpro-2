@@ -1,4 +1,8 @@
-const AUTH_PROVIDER_URL = process.env.AUTH_PROVIDER_URL ?? "http://localhost:3000";
+//PUBLIC_URL dipakai buat redirect BROWSER (getAuthorizeUrl)
+//yang bisa diakses dari browser user, misal host-mapped port di docker-compose.
+//INTERNAL_URL dipakai App A sendiri manggil back-channel (exchangeCodeForToken,fetchUserinfo) server-to-server
+const AUTH_PROVIDER_PUBLIC_URL = process.env.AUTH_PROVIDER_PUBLIC_URL ?? "http://localhost:3000";
+const AUTH_PROVIDER_INTERNAL_URL = process.env.AUTH_PROVIDER_INTERNAL_URL ?? "http://localhost:3000";
 const OAUTH_CLIENT_ID = process.env.OAUTH_CLIENT_ID ?? "app-b";
 const OAUTH_CLIENT_SECRET = process.env.OAUTH_CLIENT_SECRET ?? "app-b-secret";
 const OAUTH_REDIRECT_URI = process.env.OAUTH_REDIRECT_URI ?? "http://localhost:5000/callback";
@@ -42,7 +46,7 @@ export async function exchangeCodeForToken(params: {
   codeVerifier: string;
   redirectUri?: string;
 }): Promise<TokenResponse> {
-  const res = await fetch(`${AUTH_PROVIDER_URL}/token`, {
+  const res = await fetch(`${AUTH_PROVIDER_INTERNAL_URL}/token`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -64,7 +68,7 @@ export async function exchangeCodeForToken(params: {
 }
 
 export async function fetchUserinfo(accessToken: string): Promise<UserinfoResponse> {
-  const url = new URL(`${AUTH_PROVIDER_URL}/userinfo`);
+  const url = new URL(`${AUTH_PROVIDER_INTERNAL_URL}/userinfo`);
   url.searchParams.set("client_id", OAUTH_CLIENT_ID);
 
   const res = await fetch(url, {
@@ -80,7 +84,7 @@ export async function fetchUserinfo(accessToken: string): Promise<UserinfoRespon
 }
 
 export function getAuthorizeUrl(params: { state: string; codeChallenge: string; redirectUri?: string }): string {
-  const url = new URL("/authorize", AUTH_PROVIDER_URL);
+  const url = new URL("/authorize", AUTH_PROVIDER_PUBLIC_URL);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("client_id", OAUTH_CLIENT_ID);
   url.searchParams.set("redirect_uri", params.redirectUri ?? OAUTH_REDIRECT_URI);
