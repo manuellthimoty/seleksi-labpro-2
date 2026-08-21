@@ -8,6 +8,8 @@ import { ackMessage, nackForRetry, publishToDlq } from "./lib/rabbitmq.js";
 
 const MAX_ATTEMPTS = 5;
 
+const DEMO_DELAY_MS = Number(process.env.SYNC_WORKER_DEMO_DELAY_MS) || 0;
+
 interface EventPayload {
     eventId: string;
     eventType: string;
@@ -79,6 +81,10 @@ async function deliverToApplication(payload: EventPayload, app: { id: string; lo
 }
 
 export async function handleMessage(channel: Channel, msg: ConsumeMessage): Promise<void> {
+    if (DEMO_DELAY_MS > 0) {
+        await new Promise((resolve) => setTimeout(resolve, DEMO_DELAY_MS));
+    }
+
     let payload: EventPayload;
     try {
         payload = JSON.parse(msg.content.toString("utf-8")) as EventPayload;

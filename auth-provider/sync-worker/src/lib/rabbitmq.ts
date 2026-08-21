@@ -71,10 +71,28 @@ async function assertTopology(channel: Channel): Promise<void> {
     await channel.bindQueue(DLQ_QUEUE, DLQ_EXCHANGE, "#");
 }
 
-export function consumeMainQueue(channel: Channel, onMessage: (msg: ConsumeMessage) => void): void {
-    channel.consume(MAIN_QUEUE, (msg) => {
+/** Balikin consumerTag supaya konsumsi bisa dihentikan pas graceful shutdown. */
+export async function consumeMainQueue(
+    channel: Channel,
+    onMessage: (msg: ConsumeMessage) => void,
+): Promise<string> {
+    const { consumerTag } = await channel.consume(MAIN_QUEUE, (msg) => {
         if (msg) onMessage(msg);
     }, { noAck: false });
+    return consumerTag;
+}
+
+/**
+ * Berhenti nerima pesan BARU, tapi pesan yang udah telanjur dikirim ke kita
+ * tetap boleh diselesaikan. Ini bedanya sama nutup channel langsung.
+ */
+export async function stopConsuming(channel: Channel, consumerTag: string): Promise<void> {
+    await channel.cancel(consumerTag);
+}
+
+/** Balikin pesan yang belum selesai ke queue biar gak hilang pas shutdown. */
+export function requeueMessage(channel: Channel, msg: ConsumeMessage): void {
+    channel.nack(msg, false, true);
 }
 
 export function nackForRetry(channel: Channel, msg: ConsumeMessage): void {
