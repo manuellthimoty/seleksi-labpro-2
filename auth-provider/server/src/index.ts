@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { serve } from '@hono/node-server';
 import { requestId } from './middleware/request-id.js';
 import { requireAuth } from './middleware/require-auth.js';
+import { requireAdmin } from './middleware/require-admin.js';
 import type { AppEnv } from './lib/hono-env.js';
 import auth from './routes/auth.js';
 import authorize from './routes/authorize.js';
@@ -21,6 +22,8 @@ app.get('/', (c) => {
     return c.text('auth server don');
 });
 
+app.get('/health', (c) => c.json({ status: 'ok' }));
+
 // public
 app.route('/', auth);
 app.route('/', authorize);
@@ -28,14 +31,13 @@ app.route('/', token);
 app.route('/', userinfo);
 app.route('/', logout);
 
-// admin
-app.use('/users/*', requireAuth);
+app.use('/users/*', requireAuth, requireAdmin);
 app.route('/users', users);
 
-app.use('/groups/*', requireAuth);
+app.use('/groups/*', requireAuth, requireAdmin);
 app.route('/groups', groups);
 
-app.use('/applications/*', requireAuth);
+app.use('/applications/*', requireAuth, requireAdmin);
 app.route('/applications', applications);
 
 const port = Number(process.env.PORT) || 3000;
