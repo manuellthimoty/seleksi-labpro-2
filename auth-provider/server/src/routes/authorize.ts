@@ -124,6 +124,9 @@ authorize.get('/authorize', async (c) => {
             userId: session.userId,
             applicationId: application.id,
             sessionId: session.id,
+            // dibedain: ditolak karena ADA deny eksplisit, atau karena gak punya
+            // allow sama sekali
+            metadata: { reason: isDenied ? 'explicit_deny_policy' : 'no_allow_policy' },
         });
         const deniedUrl = new URL(redirect_uri);
         deniedUrl.searchParams.set('error', 'access_denied');
